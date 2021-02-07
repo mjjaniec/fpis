@@ -1,49 +1,34 @@
 package org.mj.scala
 package props
 
-case class Gen[+A](t: Transition[A, Rng]) {
-  def map[B](f: A => B): Gen[B] = Gen(t.map(f))
+import org.mj.scala.Rand.Rand
+import org.mj.scala.props.Gen.Size
 
-  def flatMap[B](f: A => Gen[B]): Gen[B] = Gen(t.flatMap(a => f(a).t))
+case class GenEnv(size: Int, iteration: Int)
 
-  def unfold[B](zero: B)(reduce: (A, B) => Option[B]): Gen[B] = Gen(t.unfold(zero)(reduce))
+trait Gen[+A] extends Function[GenEnv, Rand[A]] {
+  def map[B](f: A => B): Gen[B] = this(_).map(f)
 
-  def unfoldTimes[B](times: Int, zero: B)(reduce: (A, B) => B): Gen[B] = Gen(t.unfoldTimes(times, zero)(reduce))
+  def flatMap[B](f: A => Gen[B]): Gen[B] = size => this(size).flatMap(a => f(a)(size))
 
-  def get(rng: Rng): A = t.exec(rng)
+  def unfold[B](zero: B)(reduce: (A, B) => Option[B]): Gen[B] = this(_).unfold(zero)(reduce)
 
-  def unsized: SGen[A] = SGen.unit(this)
+  def unfoldTimes[B](times: Int, zero: B)(reduce: (A, B) => B): Gen[B] = this(_).unfoldTimes(times, zero)(reduce)
 
   def maybe: Gen[Option[A]] = Gen.boolean.flatMap {
     case true => this.map(Some(_))
     case false => Gen.unit(None)
   }
-}
 
-trait SGen[+A] extends Function[Int, Gen[A]] {
-
-  def map[B](f: A => B): SGen[B] = n => apply(n).map(f)
-
-  def flatMap[B](f: A => SGen[B]): SGen[B] = n => apply(n).flatMap(a => f(a)(n))
-
-  def get(n: Int, rng: Rng): A = apply(n).get(rng)
-}
-
-object SGen {
-  def unit[A](gen: Gen[A]): SGen[A] = _ => gen
-
-  def listOf[A](gen: Gen[A]): SGen[Seq[A]] = n => Gen.listOfN(gen, n)
-
-  def alphanumStr: SGen[String] = n => Gen.alphanumStr(n)
-
-  def nonEmptyList[A](gen: Gen[A]): SGen[Seq[A]] = n => Gen.listOfN(gen, Math.max(n, 1))
-
-  def int: SGen[Int] = n => Gen(Rand.map2(Rand.between(0, Math.min(1, n)), Rand.sign)(_ * _))
-
+  def get(size: Size = 4, seed: Long = 0): A = this(GenEnv(size, 0)).exec(SimpleRng(seed))
 }
 
 object Gen {
-  def unit[A](a: A): Gen[A] = Gen(Rand.unit(a))
+  type Size = Int
+
+  def unit[A](a: A): Gen[A] = _ => Rand.unit(a)
+
+  def roundRobin[A](elems: IndexedSeq[A]): Gen[A] = env => Rand.unit(elems(env.iteration % elems.size))
 
   def union[A](a: Gen[A], b: Gen[A]): Gen[A] = boolean.flatMap {
     case true => a
@@ -52,27 +37,34 @@ object Gen {
 
   def weighted[A](a: Gen[A], b: Gen[A], weight: Double): Gen[A] = double.flatMap(r => if (r < weight) a else b)
 
-  def boolean: Gen[Boolean] = Gen(Rand.int.map(i => (i & 1) == 1))
+  def boolean: Gen[Boolean] = _ => Rand.int.map(i => (i & 1) == 1)
 
-  def int: Gen[Int] = Gen(Rand.int)
+  val smallInt: Gen[Int] = env => Rand.map2(Rand.between(0, env.size + 1), Rand.sign)(_ * _)
 
-  def double: Gen[Double] = Gen(Rand.double)
+  val int: Gen[Int] = env => {
+    if (env.size < 8) {
+      val bound = 1 << (env.size << 2)
+      Rand.between(-bound, bound)
+    } else Rand.int
+  }
 
-  def between(a: Int, b: Int): Gen[Int] = Gen(Rand.between(a, b))
+  def double: Gen[Double] = _ => Rand.double
+
+  def between(a: Int, b: Int): Gen[Int] = _ => Rand.between(a, b)
 
   def alphanum: Gen[Char] = {
     val set = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     between(0, set.length).map(set.charAt)
   }
 
-  def alphanumStr(len: Int): Gen[String] =
+  def alphanumStrLen(len: Int): Gen[String] =
     alphanum.unfoldTimes(len, new StringBuilder()) { case (c, sb) => sb.append(c) }.map(_.toString())
 
-  def aphpanumStr: Gen[String] = between(0, 40).flatMap(alphanumStr)
+  def alphanumStr: Gen[String] = env => alphanumStrLen(env.size)(env)
 
-  def listOfN[A](gen: Gen[A], size: Gen[Int]): Gen[Seq[A]] = size.flatMap(listOfN(gen, _))
+  def listOf[A](gen: Gen[A]): Gen[Seq[A]] = env => listOfN(gen, env.size)(env)
 
-  def listOf[A](gen: Gen[A]): Gen[Seq[A]] = between(0, 40).flatMap(listOfN(gen, _))
+  def nonEmptyListOf[A](gen: Gen[A]): Gen[Seq[A]] = env => listOfN(gen, Math.max(1, env.size))(env)
 
-  def listOfN[A](gen: Gen[A], n: Int): Gen[Seq[A]] = Gen(gen.t.elems(n))
+  def listOfN[A](gen: Gen[A], n: Int): Gen[Seq[A]] = env => gen(env).elems(n)
 }

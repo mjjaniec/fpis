@@ -1,13 +1,13 @@
 package org.mj.scala.props
 
-import org.mj.scala.{BasicTest, Par}
+import org.mj.scala.BasicTest
 
 class PropTest extends BasicTest {
-  private final val env = ExecEnv(100, 4)
+  private final val env = ExecEnv()
 
   it should "work" in {
     val nums = Gen.between(-10, 10)
-    val list = SGen.nonEmptyList(nums)
+    val list = Gen.nonEmptyListOf(nums)
     val prop = Prop.forAll(list) { list =>
       val max = list.max
       list.forall(max >= _)
@@ -18,10 +18,22 @@ class PropTest extends BasicTest {
 
   it should "recover" in {
     val nums = Gen.between(-10, 10)
-    val list = SGen.listOf(nums)
+    val list = Gen.listOf(nums)
     val prop = Prop.forAll(list) { list =>
       val max = list.max
       list.forall(max >= _)
+    }
+
+    val result = prop.check(env)
+    assert(result.falsified)
+  }
+
+  it should "falsify" in {
+    val list = Gen.nonEmptyListOf(Gen.int)
+    val prop = Prop.forAll(list) { list =>
+      val max = list.max
+      println(list)
+      list.forall(max <= _)
     }
 
     val result = prop.check(env)
@@ -29,21 +41,9 @@ class PropTest extends BasicTest {
     assert(result.falsified)
   }
 
-  it should "falsify" in {
-    val nums = Gen.between(-10, 10)
-    val list = SGen.nonEmptyList(nums)
-    val prop = Prop.forAll(list) { list =>
-      val max = list.max
-      list.forall(max > _)
-    }
-
-    println(prop.check(env))
-    assert(prop.check(env).falsified)
-  }
-
   it should "pass example" in {
     val nums = Gen.between(-10, 10)
-    val list = SGen.listOf(nums)
+    val list = Gen.listOf(nums)
     val prop = Prop.forAll(list) { list =>
       list.sorted.sliding(2, 1).forall {
         case Seq(a, b) => a <= b
@@ -54,10 +54,4 @@ class PropTest extends BasicTest {
     prop.exec(env)
     assert(prop.check(env).hold)
   }
-
-  it should "work with par" in {
-
-    Par.unit(1).map(_ + 1) == Par.unit(2)
-  }
-
 }

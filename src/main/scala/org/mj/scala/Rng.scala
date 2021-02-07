@@ -46,8 +46,12 @@ object Rand extends TransitionCompanion[Rng] {
   }
 
   def between(min: Int, maxEx: Int): Rand[Int] = {
-    val diff = maxEx.toLong - min
-    upToLong(diff).map(l => (l + min).toInt)
+    if (min + 1 >= maxEx) {
+      Rand.unit(min)
+    } else {
+      val diff = maxEx.toLong - min
+      upToLong(diff).map(l => (l + min).toInt)
+    }
   }
 
   def ints(n: Int): Rand[Seq[Int]] = int.elems(n)
